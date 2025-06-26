@@ -12,7 +12,7 @@ const char* ssid = "eoh.ioo";
 const char* password = "Eoh@2020";
 
 // Google Apps Script Web App URL
-const char* googleScriptURL = "https://script.google.com/macros/s/AKfycbzjx4MP0oo2lDLb_fFZzXdCWpI6NeW4aaTKsKlrMRBosX6w64I9gWDcWF9KHWx3ywzG/exec";
+const char* googleScriptURL = "https://script.google.com/macros/s/AKfycbzEBoBf5EDSb5qkA_S-7er430o7UiSNDdXU-nr7gIgANiIJJbmeKQkUw3jJJG-pyAcu0Q/exec";
 
 // NTP Client for time sync
 WiFiUDP ntpUDP;
@@ -44,28 +44,54 @@ void setup() {
   Serial.begin(115200);
   ReaderSerial.begin(57600, SERIAL_8N1, 16, 17);  // RX2=GPIO16, TX2=GPIO17
 
-  Serial.println("ESP32 UHF Reader to Google Sheets - v3.0");
+  Serial.println("ESP32 UHF Reader to Google Sheets - v3.1");
 
   // Connect to WiFi
   WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.println("Connecting to WiFi...");
+  int wifiAttempts = 0;
+  while (WiFi.status() != WL_CONNECTED && wifiAttempts < 20) {
+    delay(500);
+    Serial.print(".");
+    wifiAttempts++;
   }
-  Serial.println("WiFi connected!");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println();
+    Serial.println("WiFi connected!");
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("WiFi connection failed!");
+    return;
+  }
 
   // Initialize NTP
   timeClient.begin();
-  timeClient.update();
-  Serial.println("NTP initialized");
+  for (int i = 0; i < 5; i++) {
+    if (timeClient.update()) {
+      Serial.println("NTP synchronized");
+      break;
+    }
+    delay(1000);
+  }
+
+  // Test Google Apps Script connection
+  Serial.println("Testing Google Apps Script connection...");
+  testGoogleConnection();
 
   Serial.println("System ready - listening for UHF tags...");
   lastCleanupTime = millis();
 }
 
 void loop() {
+  // Check WiFi connection
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi disconnected, reconnecting...");
+    WiFi.reconnect();
+    delay(5000);
+    return;
+  }
+
   // Update NTP time
   timeClient.update();
 
@@ -76,6 +102,31 @@ void loop() {
   processSerialData();
 
   delay(10);
+}
+
+void testGoogleConnection() {
+  HTTPClient http;
+  http.begin(googleScriptURL);
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(20000);
+  
+  // Test with dummy data
+  String testPayload = "{\"uid\":\"TEST123456\"}";
+  Serial.println("Sending test payload: " + testPayload);
+  
+  int httpResponseCode = http.POST(testPayload);
+  
+  Serial.println("Test Response Code: " + String(httpResponseCode));
+  
+  if (httpResponseCode > 0) {
+    String response = http.getString();
+    Serial.println("Test Response: " + response);
+  } else {
+    Serial.println("Test Error: " + String(httpResponseCode));
+    Serial.println("HTTP Error: " + http.errorToString(httpResponseCode));
+  }
+  
+  http.end();
 }
 
 void processSerialData() {
@@ -154,11 +205,13 @@ void processUID(String uid) {
   if (it != uidRecords.end()) {
     // UID exists, check if within filter time
     if (currentTime - it->second.timestamp < DUPLICATE_FILTER_TIME) {
+      Serial.println("Duplicate UID filtered: " + uid);
       return; // Skip duplicate
     }
     if (it->second.sent) {
       // Update timestamp but don't resend
       it->second.timestamp = currentTime;
+      Serial.println("UID already sent, updating timestamp: " + uid);
       return;
     }
   }
@@ -170,12 +223,26 @@ void processUID(String uid) {
   UIDRecord record = {uid, currentTime, false};
   uidRecords[uid] = record;
 
-  // Send to Google Sheets
-  if (sendToGoogleSheets(uid)) {
-    Serial.println("✓ Successfully sent to Google Sheets");
-    uidRecords[uid].sent = true;
-  } else {
-    Serial.println("✗ Failed to send to Google Sheets");
+  // Send to Google Sheets with retry mechanism
+  bool success = false;
+  for (int attempt = 1; attempt <= 3; attempt++) {
+    Serial.println("Attempt " + String(attempt) + " to send UID: " + uid);
+    
+    if (sendToGoogleSheets(uid)) {
+      Serial.println("✓ Successfully sent to Google Sheets on attempt " + String(attempt));
+      uidRecords[uid].sent = true;
+      success = true;
+      break;
+    } else {
+      Serial.println("✗ Failed attempt " + String(attempt));
+      if (attempt < 3) {
+        delay(2000); // Wait before retry
+      }
+    }
+  }
+  
+  if (!success) {
+    Serial.println("✗ All attempts failed for UID: " + uid);
   }
 }
 
@@ -188,36 +255,82 @@ bool sendToGoogleSheets(String uid) {
   HTTPClient http;
   http.begin(googleScriptURL);
   http.addHeader("Content-Type", "application/json");
-  http.setTimeout(15000); // 15 second timeout
+  http.addHeader("User-Agent", "ESP32-UHF-Reader");
+  http.setTimeout(30000); // 30 second timeout for Google Apps Script
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 
-  // Create JSON payload
-  DynamicJsonDocument doc(256);
-  doc["uid"] = uid;
+  // Create JSON payload - simpler format
+  String jsonString = "{\"uid\":\"" + uid + "\"}";
   
-  String jsonString;
-  serializeJson(doc, jsonString);
-  
-  Serial.println("Sending: " + jsonString);
+  Serial.println("Sending payload: " + jsonString);
+  Serial.println("To URL: " + String(googleScriptURL));
+  Serial.println("Payload length: " + String(jsonString.length()));
   
   // Send POST request
   int httpResponseCode = http.POST(jsonString);
   
-  Serial.println("Response Code: " + String(httpResponseCode));
+  Serial.println("HTTP Response Code: " + String(httpResponseCode));
   
   bool success = false;
+  String response = "";
   
   // Check response
-  if (httpResponseCode == 200) {
-    String response = http.getString();
-    Serial.println("Response: " + response);
+  if (httpResponseCode > 0) {
+    response = http.getString();
+    Serial.println("Response length: " + String(response.length()));
     
-    // Parse JSON response
-    DynamicJsonDocument responseDoc(512);
-    if (deserializeJson(responseDoc, response) == DeserializationError::Ok) {
-      success = responseDoc["success"] | false;
+    // Only show first 500 chars of response to avoid spam
+    if (response.length() > 500) {
+      Serial.println("Response Body (first 500 chars): " + response.substring(0, 500) + "...");
+    } else {
+      Serial.println("Response Body: " + response);
     }
-  } else if (httpResponseCode == 302) {
-    // Redirect is usually success for Google Apps Script
+    
+    // Check if it's HTML error (starts with <!DOCTYPE or <html)
+    if (response.startsWith("<!DOCTYPE") || response.startsWith("<html")) {
+      Serial.println("ERROR: Received HTML error page instead of JSON");
+      Serial.println("This usually means:");
+      Serial.println("1. Wrong Google Apps Script URL");
+      Serial.println("2. Apps Script not deployed properly");
+      Serial.println("3. Apps Script has runtime errors");
+      return false;
+    }
+    
+    // Try to parse JSON response
+    StaticJsonDocument<512> responseDoc;
+    DeserializationError error = deserializeJson(responseDoc, response);
+    
+    if (error) {
+      Serial.println("JSON parsing error: " + String(error.c_str()));
+      // If we get 200 but can't parse, might still be success
+      if (httpResponseCode == 200 && response.indexOf("success") != -1) {
+        Serial.println("Treating as success based on 200 response code");
+        success = true;
+      }
+    } else {
+      success = responseDoc["success"] | false;
+      if (responseDoc.containsKey("error")) {
+        Serial.println("Server error: " + String(responseDoc["error"].as<const char*>()));
+      }
+      if (responseDoc.containsKey("message")) {
+        Serial.println("Server message: " + String(responseDoc["message"].as<const char*>()));
+      }
+    }
+  } else {
+    Serial.println("HTTP Error: " + http.errorToString(httpResponseCode));
+    Serial.println("WiFi Status: " + String(WiFi.status()));
+    
+    // Additional debugging for negative error codes
+    if (httpResponseCode < 0) {
+      Serial.println("Connection error - check:");
+      Serial.println("1. Internet connectivity");
+      Serial.println("2. Google Apps Script URL");
+      Serial.println("3. DNS resolution");
+    }
+  }
+  
+  // Handle redirects as success (common with Google Apps Script)
+  if (httpResponseCode == 302 || httpResponseCode == 301) {
     Serial.println("Redirect response - treating as success");
     success = true;
   }
