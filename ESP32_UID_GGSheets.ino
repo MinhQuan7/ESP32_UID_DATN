@@ -53,7 +53,42 @@ void loop() {
     cleanupOldEntries(currentTime);
   }
 }
-
+String extractUID(byte* buffer, byte dataLen, int targetIndex = -1) {
+  String uid = "";
+  String targetByte = "";  // Lưu giá trị byte tại index đích
+  
+  Serial.println("Extracting UID from " + String(dataLen) + " bytes of data");
+  
+  if (dataLen > 0) {
+    int endPos = 4 + dataLen;
+    for (int i = 4; i < endPos; i++) {
+      // Tạo chuỗi hex cho byte hiện tại
+      String byteStr = "";
+      if (buffer[i] < 0x10) {
+        byteStr += "0";
+      }
+      byteStr += String(buffer[i], HEX);
+      
+      // Nếu đây là vị trí mục tiêu
+      if (i - 4 == targetIndex) {
+        targetByte = byteStr;
+      }
+      
+      // Thêm vào UID nếu trong phạm vi 8 byte đầu
+      if (i - 4 < 8) {
+        uid += byteStr;
+      }
+    }
+    uid.toUpperCase();
+    
+    // Trả về giá trị mục tiêu nếu được chỉ định
+    if (targetIndex >= 0 && targetByte != "") {
+      return targetByte;
+    }
+  }
+  
+  return uid;
+}
 void processReaderData() {
   byte buffer[32];  // Buffer large enough to contain packet
   int len = ReaderSerial.readBytes(buffer, sizeof(buffer));
@@ -68,17 +103,21 @@ void processReaderData() {
   Serial.println();
   
   // Validate and parse packet
-  if (len >= 5 && buffer[2] == 0xEE) {  // Check minimum length and reCmd
-    byte dataLen = buffer[0] - 4;  // Calculate Data[] length: Len = Adr + reCmd + Status + Data[] + CRC-16
+  if (len >= 5 && buffer[2] == 0xEE) {
+    byte dataLen = buffer[0] - 4;
     
     Serial.println("Packet length: " + String(buffer[0]) + ", Data length: " + String(dataLen));
     
-    // Accept any packet with data (minimum 1 byte)
-    if (dataLen >= 1) {  // Accept packets with at least 1 byte of data
+    if (dataLen >= 1) {
+      // Trích xuất UID (8 byte đầu)
       String uid = extractUID(buffer, dataLen);
       
-      if (uid.length() == 16) {  // Ensure we have exactly 16 hex characters (8 bytes)
+      // Trích xuất giá trị tại index 8 (BF trong ví dụ)
+      String targetValue = extractUID(buffer, dataLen, 8);
+      
+      if (uid.length() == 16) {
         Serial.println("Valid UID detected: " + uid);
+        Serial.println("Target value at index 8: " + targetValue);
         
         // Check anti-spam mechanism
         if (shouldProcessUID(uid)) {
@@ -101,38 +140,7 @@ void processReaderData() {
   }
 }
 
-String extractUID(byte* buffer, byte dataLen) {
-  String uid = "";
-  
-  // Extract available bytes for UID starting from byte 4 (Status is at byte 3)
-  // For the data format: 07 00 EE 00 E2 80 48 50
-  // Len=07, Adr=00, reCmd=EE, Status=00, Data starts at byte 4
-  Serial.println("Extracting UID from " + String(dataLen) + " bytes of data");
-  
-  if (dataLen > 0) {
-    // Extract all available data bytes starting from position 4
-    int endPos = 4 + dataLen;
-    for (int i = 4; i < endPos; i++) {
-      if (buffer[i] < 0x10) {
-        uid += "0";  // Add leading zero for single digit hex values
-      }
-      uid += String(buffer[i], HEX);
-    }
-    uid.toUpperCase();  // Convert to uppercase for consistency
-    
-    // Pad with zeros if less than 8 bytes (16 hex chars)
-    while (uid.length() < 16) {
-      uid += "00";
-    }
-    
-    // Truncate if more than 8 bytes (keep first 16 hex chars)
-    if (uid.length() > 16) {
-      uid = uid.substring(0, 16);
-    }
-  }
-  
-  return uid;
-}
+
 
 bool shouldProcessUID(String uid) {
   unsigned long currentTime = millis();
