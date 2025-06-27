@@ -9,7 +9,7 @@ const char* ssid = "eoh.ioo";
 const char* password = "Eoh@2020";
 
 // Google Apps Script URL
-const char* scriptURL = "https://script.google.com/macros/s/AKfycbyyyyrTKYOvlc7YwRce4rSYdhDTPNZAassM9mRBhRACsCfIxe3LgSPLbolo4LaApn-V/exec";
+const char* scriptURL = "https://script.google.com/macros/s/AKfycby3ee_RwxMTqklgxHIcQT3icFLy6zEZPRizB2udZpWq24xxlCaS838s4WC_z1J9nAU6/exec";
 
 HardwareSerial ReaderSerial(2);  // Use ReaderSerial for RX2/TX2
 
@@ -71,12 +71,14 @@ void processReaderData() {
   if (len >= 5 && buffer[2] == 0xEE) {  // Check minimum length and reCmd
     byte dataLen = buffer[0] - 4;  // Calculate Data[] length: Len = Adr + reCmd + Status + Data[] + CRC-16
     
-    // Enhanced validation for 8-byte UID (EPC)
-    if (dataLen >= 8) {  // Accept packets with at least 8 bytes of data
+    Serial.println("Packet length: " + String(buffer[0]) + ", Data length: " + String(dataLen));
+    
+    // Accept any packet with data (minimum 1 byte)
+    if (dataLen >= 1) {  // Accept packets with at least 1 byte of data
       String uid = extractUID(buffer, dataLen);
       
-      if (uid.length() > 0) {
-        Serial.println("Valid 8-byte UID detected: " + uid);
+      if (uid.length() == 16) {  // Ensure we have exactly 16 hex characters (8 bytes)
+        Serial.println("Valid UID detected: " + uid);
         
         // Check anti-spam mechanism
         if (shouldProcessUID(uid)) {
@@ -88,9 +90,11 @@ void processReaderData() {
         } else {
           Serial.println("UID blocked by anti-spam mechanism: " + uid);
         }
+      } else {
+        Serial.println("Invalid UID length: " + String(uid.length()) + " characters");
       }
     } else {
-      Serial.println("Invalid Data[] length: " + String(dataLen) + " bytes (minimum 8 required)");
+      Serial.println("Invalid Data[] length: " + String(dataLen) + " bytes (minimum 1 required)");
     }
   } else {
     Serial.println("Invalid packet format");
@@ -100,16 +104,31 @@ void processReaderData() {
 String extractUID(byte* buffer, byte dataLen) {
   String uid = "";
   
-  // Extract exactly 8 bytes for UID starting from byte 4
-  // Ensure we have at least 8 bytes available
-  if (dataLen >= 8) {
-    for (int i = 4; i < 12; i++) {  // Extract 8 bytes (positions 4-11)
+  // Extract available bytes for UID starting from byte 4 (Status is at byte 3)
+  // For the data format: 07 00 EE 00 E2 80 48 50
+  // Len=07, Adr=00, reCmd=EE, Status=00, Data starts at byte 4
+  Serial.println("Extracting UID from " + String(dataLen) + " bytes of data");
+  
+  if (dataLen > 0) {
+    // Extract all available data bytes starting from position 4
+    int endPos = 4 + dataLen;
+    for (int i = 4; i < endPos; i++) {
       if (buffer[i] < 0x10) {
         uid += "0";  // Add leading zero for single digit hex values
       }
       uid += String(buffer[i], HEX);
     }
     uid.toUpperCase();  // Convert to uppercase for consistency
+    
+    // Pad with zeros if less than 8 bytes (16 hex chars)
+    while (uid.length() < 16) {
+      uid += "00";
+    }
+    
+    // Truncate if more than 8 bytes (keep first 16 hex chars)
+    if (uid.length() > 16) {
+      uid = uid.substring(0, 16);
+    }
   }
   
   return uid;
