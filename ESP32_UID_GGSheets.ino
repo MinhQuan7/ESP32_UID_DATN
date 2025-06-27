@@ -9,7 +9,7 @@ const char* ssid = "eoh.ioo";
 const char* password = "Eoh@2020";
 
 // Google Apps Script URL
-const char* scriptURL = "https://script.google.com/macros/s/AKfycby3ee_RwxMTqklgxHIcQT3icFLy6zEZPRizB2udZpWq24xxlCaS838s4WC_z1J9nAU6/exec";
+const char* scriptURL = "https://script.google.com/macros/s/AKfycbzMuP4sLYqDz63Bk8-wjD4w08h-HXphAvJVfFAHba_FYE9_VPOKAaKjwt8smCaoz88U/exec";
 
 HardwareSerial ReaderSerial(2);  // Use ReaderSerial for RX2/TX2
 
@@ -53,41 +53,23 @@ void loop() {
     cleanupOldEntries(currentTime);
   }
 }
-String extractUID(byte* buffer, byte dataLen, int targetIndex = -1) {
+String extractUID(byte* buffer, byte dataLen) {
   String uid = "";
-  String targetByte = "";  // Lưu giá trị byte tại index đích
   
   Serial.println("Extracting UID from " + String(dataLen) + " bytes of data");
   
   if (dataLen > 0) {
     int endPos = 4 + dataLen;
     for (int i = 4; i < endPos; i++) {
-      // Tạo chuỗi hex cho byte hiện tại
-      String byteStr = "";
       if (buffer[i] < 0x10) {
-        byteStr += "0";
+        uid += "0";  // Thêm '0' phía trước nếu byte < 0x10
       }
-      byteStr += String(buffer[i], HEX);
-      
-      // Nếu đây là vị trí mục tiêu
-      if (i - 4 == targetIndex) {
-        targetByte = byteStr;
-      }
-      
-      // Thêm vào UID nếu trong phạm vi 8 byte đầu
-      if (i - 4 < 8) {
-        uid += byteStr;
-      }
+      uid += String(buffer[i], HEX);
     }
-    uid.toUpperCase();
-    
-    // Trả về giá trị mục tiêu nếu được chỉ định
-    if (targetIndex >= 0 && targetByte != "") {
-      return targetByte;
-    }
+    uid.toUpperCase();  // Chuyển thành chữ hoa
   }
   
-  return uid;
+  return uid; // Trả về toàn bộ data dưới dạng hex string
 }
 void processReaderData() {
   byte buffer[32];  // Buffer large enough to contain packet
@@ -103,37 +85,32 @@ void processReaderData() {
   Serial.println();
   
   // Validate and parse packet
+
   if (len >= 5 && buffer[2] == 0xEE) {
     byte dataLen = buffer[0] - 4;
     
     Serial.println("Packet length: " + String(buffer[0]) + ", Data length: " + String(dataLen));
     
     if (dataLen >= 1) {
-      // Trích xuất UID (8 byte đầu)
       String uid = extractUID(buffer, dataLen);
       
-      // Trích xuất giá trị tại index 8 (BF trong ví dụ)
-      String targetValue = extractUID(buffer, dataLen, 8);
-      
-      if (uid.length() == 16) {
+      // Kiểm tra độ dài UID (13 byte = 26 ký tự hex)
+      if (uid.length() == 26) { 
         Serial.println("Valid UID detected: " + uid);
-        Serial.println("Target value at index 8: " + targetValue);
         
-        // Check anti-spam mechanism
+        // Kiểm tra chống spam
         if (shouldProcessUID(uid)) {
           Serial.println("Sending UID to Google Sheets: " + uid);
           sendToGoogleSheets(uid);
           
-          // Update last read time for this UID
+          // Cập nhật thời gian đọc cuối
           lastReadTime[uid] = millis();
         } else {
           Serial.println("UID blocked by anti-spam mechanism: " + uid);
         }
       } else {
-        Serial.println("Invalid UID length: " + String(uid.length()) + " characters");
+        Serial.println("Invalid UID length: " + String(uid.length()) + " characters (expected 26)");
       }
-    } else {
-      Serial.println("Invalid Data[] length: " + String(dataLen) + " bytes (minimum 1 required)");
     }
   } else {
     Serial.println("Invalid packet format");
@@ -141,17 +118,19 @@ void processReaderData() {
 }
 
 
-
 bool shouldProcessUID(String uid) {
+  // UID 13 byte sẽ dài hơn nên cần kiểm tra riêng
+  if (uid.length() != 26) return false;
+  
   unsigned long currentTime = millis();
   
-  // Check if UID exists in map and if enough time has passed
+  // Kiểm tra nếu UID đã được đọc trước đó
   if (lastReadTime.find(uid) != lastReadTime.end()) {
     unsigned long timeDiff = currentTime - lastReadTime[uid];
     return timeDiff >= ANTI_SPAM_INTERVAL;
   }
   
-  // First time reading this UID
+  // Lần đầu đọc UID này
   return true;
 }
 
