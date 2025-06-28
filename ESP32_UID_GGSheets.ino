@@ -56,20 +56,28 @@ void loop() {
 String extractUID(byte* buffer, byte dataLen) {
   String uid = "";
   
-  Serial.println("Extracting UID from " + String(dataLen) + " bytes of data");
-  
-  if (dataLen > 0) {
-    int endPos = 4 + dataLen;
-    for (int i = 4; i < endPos; i++) {
-      if (buffer[i] < 0x10) {
-        uid += "0";  // Thêm '0' phía trước nếu byte < 0x10
-      }
-      uid += String(buffer[i], HEX);
-    }
-    uid.toUpperCase();  // Chuyển thành chữ hoa
+  // CHỈNH SỬA: In log để debug
+  Serial.print("Raw data (hex): ");
+  for (int i = 0; i < dataLen + 4; i++) {
+    if(buffer[i] < 0x10) Serial.print("0");
+    Serial.print(buffer[i], HEX);
+    Serial.print(" ");
   }
+  Serial.println();
+
+  // Trích xuất UID dạng hex
+  for (int i = 4; i < 4 + dataLen; i++) {
+    if (buffer[i] < 0x10) uid += "0";
+    uid += String(buffer[i], HEX);
+  }
+  uid.toUpperCase();
   
-  return uid; // Trả về toàn bộ data dưới dạng hex string
+  // CHỈNH SỬA QUAN TRỌNG: Cắt bỏ byte cuối nếu cần
+  if(uid.length() == 26) {
+    uid = uid.substring(0, 24); // Giữ lại 12 byte đầu
+    Serial.println("Trimmed UID: " + uid);
+  }
+  return uid;
 }
 void processReaderData() {
   byte buffer[32];  // Buffer large enough to contain packet
@@ -91,12 +99,15 @@ void processReaderData() {
     
     Serial.println("Packet length: " + String(buffer[0]) + ", Data length: " + String(dataLen));
     
-    if (dataLen >= 1) {
-      String uid = extractUID(buffer, dataLen);
+  if (dataLen >= 1) {
+    String uid = extractUID(buffer, dataLen);
+    
+    // CHỈNH SỬA: Nhận cả UID 24 và 26 ký tự
+    if (uid.length() == 24 || uid.length() == 26) { 
+      // Chuẩn hóa thành 24 ký tự nếu cần
+      if(uid.length() == 26) uid = uid.substring(0, 24);
       
-      // Kiểm tra độ dài UID (13 byte = 26 ký tự hex)
-      if (uid.length() == 26) { 
-        Serial.println("Valid UID detected: " + uid);
+      Serial.println("Valid UID: " + uid);
         
         // Kiểm tra chống spam
         if (shouldProcessUID(uid)) {
@@ -120,7 +131,7 @@ void processReaderData() {
 
 bool shouldProcessUID(String uid) {
   // UID 13 byte sẽ dài hơn nên cần kiểm tra riêng
-  if (uid.length() != 26) return false;
+  // if (uid.length() != 26) return false;
   
   unsigned long currentTime = millis();
   
