@@ -81,11 +81,11 @@ String extractUID(byte* buffer, byte dataLen) {
 }
 void processReaderData() {
   byte buffer[32];  // Buffer large enough to contain packet
-  int len = ReaderSerial.readBytes(buffer, sizeof(buffer));
+  int len = ReaderSerial.readBytes(buffer, sizeof(buffer)); //calculate len of buffer
   
   // Print raw data for debugging
   Serial.print("Raw data received: ");
-  for (int i = 0; i < len; i++) {
+  for (int i = 0; i < len; i++) { //Lap qua tung bit
     if (buffer[i] < 0x10) Serial.print("0");  // Add leading zero for single digit hex
     Serial.print(buffer[i], HEX);
     Serial.print(" ");
