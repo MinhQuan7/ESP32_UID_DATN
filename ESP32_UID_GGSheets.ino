@@ -9,7 +9,7 @@ const char* ssid = "eoh.ioo";
 const char* password = "Eoh@2020";
 
 // Google Apps Script URL
-const char* scriptURL = "https://script.google.com/macros/s/AKfycbzMuP4sLYqDz63Bk8-wjD4w08h-HXphAvJVfFAHba_FYE9_VPOKAaKjwt8smCaoz88U/exec";
+const char* scriptURL = "https://script.google.com/macros/s/AKfycbwJyAdxmLUjGNTXdB7Gg4xL7LMsilLUPSPY8fc-h4ip6mkfPrM4SsftdkrOkR7J2PSq/exec";
 
 HardwareSerial ReaderSerial(2);  // Use ReaderSerial for RX2/TX2
 
